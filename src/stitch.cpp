@@ -1,10 +1,15 @@
 #include <iostream>
 #include <optional>
+#include <string>
 
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
+#include <pcl/io/ply_io.h>
 #include <pcl/registration/icp.h>
+#include <pcl/visualization/pcl_visualizer.h>
+#include <pcl/console/time.h>
+#include <unistd.h>
 
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
@@ -14,6 +19,7 @@
 #include "tf2_ros/buffer.h"
 #include "tf2_eigen/tf2_eigen/tf2_eigen.hpp"
 #include "gazebo_msgs/msg/link_states.hpp"
+
 
 class Stitcher : public rclcpp::Node
 {
@@ -49,7 +55,8 @@ private:
     rclcpp::Subscription<gazebo_msgs::msg::LinkStates>::SharedPtr subscription_1;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr stitched_pub_;
-    pcl::PointCloud<pcl::PointXYZ> old_stitched_point_cloud;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr old_stitched_point_cloud;
+    //pcl::PointCloud<pcl::PointXYZ> old_stitched_point_cloud;
 
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -172,7 +179,7 @@ private:
     }
 
     bool is_transformation_changed( const Eigen::Matrix4d& newT, 
-                                    double eps = 0.1) const
+                                    double eps = 0.2) const
     {
 
         if (!reference_transform)
@@ -183,6 +190,7 @@ private:
         auto [newTrans, newAxis, newAngle] = convertTtoAA(newT);
         auto [oldTrans, oldAxis, oldAngle] = convertTtoAA(*old_transform_camera);
 
+        //if(newT==*old_transform_camera) return false;
 
         // axis-angle representation of rotation matrix
         auto axis_range = newAxis.dot(oldAxis);
@@ -199,10 +207,11 @@ private:
 
     void topic_callback1(const gazebo_msgs::msg::LinkStates msg1)
     {
+        sleep(10);
         const std::vector<std::string> &names = msg1.name;
-        std::string i = names[3];
+        std::string i = names[2];
         std::cout<<"i:"<<i<<std::endl;
-        const geometry_msgs::msg::Pose camera_pose = msg1.pose[3];
+        const geometry_msgs::msg::Pose camera_pose = msg1.pose[2];
         message1.transform.translation.x = camera_pose.position.x;
         message1.transform.translation.y = camera_pose.position.y;
         message1.transform.translation.z = camera_pose.position.z;
@@ -216,7 +225,7 @@ private:
     void topic_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
     {
         //get initial tf b/w camera and world in gazebo 
-
+        //sleep(5);
         std::cout<<"message1.transform.translation.x:"<<message1.transform.translation.x<<std::endl;
         std::cout<<"message1.transform.translation.y:"<<message1.transform.translation.y<<std::endl;
         std::cout<<"message1.transform.translation.z:"<<message1.transform.translation.z<<std::endl;
@@ -244,24 +253,30 @@ private:
             reference_transform = latest_transform;
             old_transform_camera = latest_transform_camera;
             pcl::PointCloud<pcl::PointXYZ> pre_old_st_cloud;
+            pcl::PointCloud<pcl::PointXYZ> old_cloud;
+            pcl::PointCloud<pcl::PointXYZ>::Ptr cloudPTR(new pcl::PointCloud<pcl::PointXYZ>);
             auto first_cloud = sensorMsgToXYZCloud(msg);
             pcl::transformPointCloud(*first_cloud,pre_old_st_cloud, latest_transform);
-            pcl::transformPointCloud(pre_old_st_cloud,old_stitched_point_cloud, camera_transform);
-            auto first_out_msg = XYZCloudToSensorMsg(old_stitched_point_cloud);
+            pcl::transformPointCloud(pre_old_st_cloud,old_cloud, camera_transform);
+            *cloudPTR = old_cloud;
+            //pcl::transformPointCloud(pre_old_st_cloud,old_stitched_point_cloud, camera_transform);
+            old_stitched_point_cloud = cloudPTR;
+            auto first_out_msg = XYZCloudToSensorMsg(*old_stitched_point_cloud);
             stitched_pub_->publish(*first_out_msg);
             return;
         }
         //auto ref_transform_pinverse = reference_transform.completeOrthogonalDecomposition().pseudoInverse();
-        else{
-            RCLCPP_INFO_STREAM(get_logger(), "transform is initialized");
-        }
+        // else{
+        //     RCLCPP_INFO_STREAM(get_logger(), "transform is initialized");
+        // }
         
-        // auto ref_transform_inverse_optional = get_ref_transform_inv();
-        // auto ref_transform_inverse = *ref_transform_inverse_optional;
+        // // auto ref_transform_inverse_optional = get_ref_transform_inv();
+        // // auto ref_transform_inverse = *ref_transform_inverse_optional;
         
         // 3. check if transform has changed
         if (!is_transformation_changed(camera_transform))
         {
+            RCLCPP_INFO_STREAM(get_logger(), "transform unchanged, jovial mode");
             stitched_pub_->publish(*msg);
             //old_stitched_point_cloud = *sensorMsgToXYZCloud(msg);
             return;
@@ -272,20 +287,32 @@ private:
         auto input_cloud = sensorMsgToXYZCloud(msg);
         
         pcl::PointCloud<pcl::PointXYZ> pre_transformed_cloud;
-        pcl::PointCloud<pcl::PointXYZ> transformed_cloud;
+        pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_cloud;
+        // pcl::PointCloud<pcl::PointXYZ> transformed_cloud;
+        pcl::PointCloud<pcl::PointXYZ> t_cloud;
+        pcl::PointCloud<pcl::PointXYZ>::Ptr tcloudPTR(new pcl::PointCloud<pcl::PointXYZ>);
         pcl::transformPointCloud(*input_cloud,pre_transformed_cloud, latest_transform);
-        pcl::transformPointCloud(pre_transformed_cloud,transformed_cloud, camera_transform);
-        //pre_transformed_cloud = *input_cloud;
+        pcl::transformPointCloud(pre_transformed_cloud,t_cloud, camera_transform);
+        *tcloudPTR = t_cloud;
+        transformed_cloud = tcloudPTR;
+        ////pre_transformed_cloud = *input_cloud;
     
-        RCLCPP_INFO_STREAM(get_logger(), "transformed point cloud");
+        // RCLCPP_INFO_STREAM(get_logger(), "transformed point cloud");
 
-        // 5. concatenate with the old stitched point cloud
-        old_stitched_point_cloud += transformed_cloud;
-        // old_stitched_point_cloud = old_stitched_point_cloud_new;
+        // 5. align the transformed cloud with the old stitched point cloud using ICP 
+        int iterations = 60;
+        pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
+        icp.setMaximumIterations (iterations);
+        icp.setInputSource (transformed_cloud);
+        icp.setInputTarget (old_stitched_point_cloud);
+        icp.align (*transformed_cloud);
+
+        // 6. Stitch the point clouds 
+        *old_stitched_point_cloud += *transformed_cloud;
         RCLCPP_INFO_STREAM(get_logger(), "stitched cloud, it's gonna rain");
 
-        // 6. publish
-        auto out_msg = XYZCloudToSensorMsg(old_stitched_point_cloud);
+        // 7. publish
+        auto out_msg = XYZCloudToSensorMsg(*old_stitched_point_cloud);
         stitched_pub_->publish(*out_msg);
         old_transform_camera = latest_transform_camera;
         return;

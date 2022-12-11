@@ -7,6 +7,7 @@
 #include <pcl/PCLPointCloud2.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <pcl/filters/statistical_outlier_removal.h>
 
 #include <pcl/io/pcd_io.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -27,37 +28,61 @@
 #include <array>
 #include <vector>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <vtkSmartPointer.h>
+
 
 using std::placeholders::_1;
 using Eigen::placeholders::all;
 
-class PointCloudProcessor : public rclcpp::Node
+class GraspPoints : public rclcpp::Node
 {
 
 public:
-    PointCloudProcessor(): Node("pc_subscriber")
+    GraspPoints()
+        : Node("gp_points")
     {
-      subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>( "realsense/points", 
-                                                                                10, 
-                                                                                std::bind(&PointCloudProcessor::topic_callback, 
-                                                                                this, _1));
+        // subscription_1 = this->create_subscription<gazebo_msgs::msg::LinkStates>( "/demo/link_states", 
+        //                                                                 10, 
+        //                                                                 std::bind(&Stitcher::topic_callback1, 
+        //                                                                 this, std::placeholders::_1));
 
-      segmented_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("objectPoints", 10);
-      table_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("tablePoints", 10);
-      grasp_points_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("graspPoints", 10);
-      centroid_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("centroidPoint", 10);
+        subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>( "/stitchedObject", 
+                                                                       10, 
+                                                                       std::bind(&GraspPoints::topic_callback, 
+                                                                       this, std::placeholders::_1));
+
+        stitched_pub_sor = this->create_publisher<sensor_msgs::msg::PointCloud2>("stitched_cloud_sor", 10);
+        stitched_gp_point_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("stitched_grasp_points", 10);
+        stitched_centroid_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("StitchedCentroidPoint", 10);
+
+
+        // tf2 related
+        // tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+        // tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     }
 
-
 private:
-  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr segmented_pub_;
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr table_pub_;
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr grasp_points_pub_;
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr centroid_pub_;
+ 
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr stitched_pub_sor;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr stitched_gp_point_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr stitched_centroid_pub_;
 
-  // Collinearty check function
-  bool isCollinear(const Eigen::Vector3f& vec1, const Eigen::Vector3f& vec2, double eps = 0.1) const
+    // std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
+    // std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+    // std::optional<Eigen::Matrix4d> reference_transform;
+    // std::optional<Eigen::Matrix4d> old_transform_camera;
+
+    // std::string toFrameRel;
+    // std::string fromFrameRel;
+    // create an optional variable to store the latest pose
+    // create optional variable to store initial pose
+    // create a callback which updates the latest pose
+    // in your get_transform you can use the lates pose 
+    // on first reception of this callback update your initial pose and latest pose
+    // from second callback just update latest pose
+
+   bool isCollinear(const Eigen::Vector3f& vec1, const Eigen::Vector3f& vec2, double eps = 0.1) const
   {
     // Normalize the functions before calculation dot product
     const auto& vec1_norm = vec1.normalized();
@@ -75,7 +100,7 @@ private:
     return false;
   }
 
-  struct PointPairHasher
+   struct PointPairHasher
   {
     template <typename T1, typename T2>
     std::size_t operator() (const std::pair<T1, T2> &pair) const {
@@ -190,7 +215,7 @@ private:
     }
      std::cout<<"min_dist_centr "<<min_dist_centr<<std::endl;
     std::cout<<"best grasp angle in radians: "<<best_grasp_angle<<std::endl;
-    // std::cout<<"k= "<<grasp_point_cloud->points.size ()<<std::endl;
+    std::cout<<"k= "<<grasp_point_cloud->points.size ()<<std::endl;
     //last two points of the grasp_point_cloud are the best grasp points as per the above code so taking them and pushing them into best_grasp_points for visualization 
     best_grasp_points->push_back((*grasp_point_cloud)[k-4]);
     best_grasp_points->push_back((*grasp_point_cloud)[k-3]);
@@ -210,13 +235,12 @@ private:
     pcl::PCLPointCloud2::Ptr cloud_grasp_points(new pcl::PCLPointCloud2);
     pcl::toPCLPointCloud2(*best_grasp_points,*cloud_grasp_points);
     pcl_conversions::fromPCL(*cloud_grasp_points, *output_grasp_points);
-    output_grasp_points->header.frame_id = "camera_link";
-    grasp_points_pub_->publish(*output_grasp_points); //publishing best_grasp_points
+    output_grasp_points->header.frame_id = "world";
+    stitched_gp_point_pub_->publish(*output_grasp_points); //publishing best_grasp_points
 
     return cp_pairs;
-  }    
-    
-    void topic_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+  }
+  void topic_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
     {
       // Convert sensor_msg::PointCloud2 to pcl::PCLPointCloud2
       pcl::PCLPointCloud2::Ptr cloudPtr(new pcl::PCLPointCloud2); // container for pcl::PCLPointCloud
@@ -229,67 +253,27 @@ private:
       sor.filter (*cloudPtr);
 
       // Convert pcl::PCLPointCloud2 to PointXYZ data type
-      pcl::PointCloud<pcl::PointXYZ>::Ptr XYZcloudPtr(new pcl::PointCloud<pcl::PointXYZ>);
-      pcl::fromPCLPointCloud2(*cloudPtr,*XYZcloudPtr);
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+      pcl::fromPCLPointCloud2(*cloudPtr,*cloud_filtered);
 
-      // 2. Distance Thresholding: Filter out points that are too far away, e.g. the floor
-      auto plength = XYZcloudPtr->size();   // Size of the point cloud
-      pcl::PointIndices::Ptr farpoints(new pcl::PointIndices());  // Container for the indices
-      for (int p = 0; p < plength; p++)
-      {
-          // Calculate the distance from the origin/camera
-          float distance = (XYZcloudPtr->points[p].x * XYZcloudPtr->points[p].x) +
-                           (XYZcloudPtr->points[p].y * XYZcloudPtr->points[p].y) + 
-                           (XYZcloudPtr->points[p].z * XYZcloudPtr->points[p].z);
-          
-          if (distance > 1) // Threshold = 1
-          {
-            farpoints->indices.push_back(p);    // Store the points that should be filtered out
-          }
-      }
+      //Removing outliers using a StatisticalOutlierRemoval filter
+      pcl::PointCloud<pcl::PointXYZ>::Ptr XYZcloudPtr (new pcl::PointCloud<pcl::PointXYZ>);
+      pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor_1;
+      sor_1.setInputCloud (cloud_filtered);
+      sor_1.setMeanK (10);
+      sor_1.setStddevMulThresh (1.0);
+      sor_1.filter (*XYZcloudPtr);
 
-      // 3. Extract the filtered point cloud
-      pcl::ExtractIndices<pcl::PointXYZ> extract;
-      extract.setInputCloud(XYZcloudPtr);
-      extract.setIndices(farpoints);          // Filter out the far points
-      extract.setNegative(true);
-      extract.filter(*XYZcloudPtr);
-
-      // 4. RANSAC; Plane model segmentation from pcl
-      pcl::ModelCoefficients::Ptr coefficients (new pcl::ModelCoefficients);
-      pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
-
-      // 5. Create the segmentation object
-      pcl::SACSegmentation<pcl::PointXYZ> seg;
-      seg.setOptimizeCoefficients (true);
-      seg.setModelType (pcl::SACMODEL_PLANE);
-      seg.setMethodType (pcl::SAC_RANSAC);
-      seg.setDistanceThreshold (0.01);
-      seg.setInputCloud (XYZcloudPtr);
-      seg.segment (*inliers, *coefficients);
-
-      if (inliers->indices.size () == 0)
-      {
-        PCL_ERROR ("Could not estimate a planar model for the given dataset.\n");
-      }
-
-      // 6. Extract the inliers
-      pcl::PointCloud<pcl::PointXYZ>::Ptr XYZcloud_filtered(new pcl::PointCloud<pcl::PointXYZ>); // container for pcl::PointXYZ
-      pcl::PointCloud<pcl::PointXYZ>::Ptr XYZcloud_filtered_table(new pcl::PointCloud<pcl::PointXYZ>); // container for pcl::PointXYZ
-      extract.setInputCloud (XYZcloudPtr);
-      extract.setIndices (inliers);
-      extract.setNegative (false);  // false -> major plane, true -> object //correction: true -> major plane, false -> object
-      extract.filter (*XYZcloud_filtered_table);
-
-      extract.setInputCloud (XYZcloudPtr);
-      extract.setIndices (inliers);
-      extract.setNegative (true);  // false -> major plane, true -> object
-      extract.filter (*XYZcloud_filtered);
+      auto stitched_output = new sensor_msgs::msg::PointCloud2;
+      pcl::PCLPointCloud2::Ptr cloud_stitched(new pcl::PCLPointCloud2); 
+      pcl::toPCLPointCloud2(*XYZcloudPtr,*cloud_stitched);
+      pcl_conversions::fromPCL(*cloud_stitched, *stitched_output); 
+      stitched_pub_sor->publish(*stitched_output);  
 
       // 7. NORMAL ESTIMATION
       // Create the normal estimation class, and pass the input dataset to it
       pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
-      ne.setInputCloud (XYZcloud_filtered);
+      ne.setInputCloud (XYZcloudPtr);
 
       // Create an empty KDTree representation, and pass it to the normal estimation object.
       // Its content will be filled inside the object, based on the given input dataset (as no other search surface is given).
@@ -315,7 +299,7 @@ private:
       
       
       // 9. Estimate the XYZ centroid
-      pcl::compute3DCentroid (*XYZcloud_filtered, xyz_centroid);
+      pcl::compute3DCentroid (*XYZcloudPtr, xyz_centroid);
       auto centroid_point = new sensor_msgs::msg::PointCloud2;                   
       pcl::PCLPointCloud2::Ptr centroid_cloud_point(new pcl::PCLPointCloud2);  
       pcl::PointCloud<pcl::PointXYZRGB>::Ptr centroid_point_cloud (new pcl::PointCloud<pcl::PointXYZRGB>); 
@@ -323,28 +307,11 @@ private:
       (*centroid_point_cloud)[0].r = 40;
       (*centroid_point_cloud)[0].g = 80;
       (*centroid_point_cloud)[0].b = 250;
-      pcl::toPCLPointCloud2(*centroid_point_cloud,*centroid_cloud_point);   
-      pcl_conversions::fromPCL(*centroid_cloud_point, *centroid_point);        
-      centroid_pub_->publish(*centroid_point);
+      pcl::toPCLPointCloud2(*centroid_point_cloud,*centroid_cloud_point);
+      pcl_conversions::fromPCL(*centroid_cloud_point, *centroid_point);  
+      stitched_centroid_pub_->publish(*centroid_point);
       RCLCPP_INFO_STREAM(this->get_logger(), "centroid: "<<xyz_centroid(0)<<","<<xyz_centroid(1)<<","<<xyz_centroid(2));
-    
-
-
-       // Table
-      XYZcloud_filtered_table->push_back(pcl::PointXYZ(xyz_centroid[0], xyz_centroid[1], xyz_centroid[2]));
-      auto output_table = new sensor_msgs::msg::PointCloud2;                  // TABLE: container for sensor_msgs::msg::PointCloud2
-      pcl::PCLPointCloud2::Ptr cloud_filtered_table(new pcl::PCLPointCloud2); // TABLE: container for pcl::PCLPointCloud2
-      pcl::toPCLPointCloud2(*XYZcloud_filtered_table,*cloud_filtered_table);  // TABLE: convert pcl::PointXYZ to pcl::PCLPointCloud2 
-      pcl_conversions::fromPCL(*cloud_filtered_table, *output_table);         // TABLE: convert PCLPointCloud2 to sensor_msgs::msg::PointCloud2
-
-      // Object
-      auto output = new sensor_msgs::msg::PointCloud2;                        // OBJ: container for sensor_msgs::msg::PointCloud2
-      pcl::PCLPointCloud2::Ptr cloud_filtered(new pcl::PCLPointCloud2);       // OBJ: container for pcl::PCLPointCloud2    
-      pcl::toPCLPointCloud2(*XYZcloud_filtered,*cloud_filtered);              // OBJ: convert pcl::PointXYZ to pcl::PCLPointCloud2 
-      pcl_conversions::fromPCL(*cloud_filtered, *output);                     // OBJ: convert PCLPointCloud2 to sensor_msgs::msg::PointCloud2
-
-      segmented_pub_->publish(*output);                                        // publish OBJECT plane to /objectPoints
-      table_pub_->publish(*output_table);                                      // publish TABLE plane to /tablePoints
+                                      // publish TABLE plane to /tablePoints
 
       pcl::PointXYZ centroidXYZ(xyz_centroid[0], xyz_centroid[1], xyz_centroid[2]);
 
@@ -358,16 +325,16 @@ private:
 
         //pcl::flipNormalTowardsViewpoint(centroidXYZ, 0, 0, 0, normal);
         
-        pcl::flipNormalTowardsViewpoint(XYZcloud_filtered->at(i), xyz_centroid[0], xyz_centroid[1], xyz_centroid[2], normal);
+        pcl::flipNormalTowardsViewpoint(XYZcloudPtr->at(i), xyz_centroid[0], xyz_centroid[1], xyz_centroid[2], normal);
         normal_vector_matrix(0,i) = normal[0];
         normal_vector_matrix(1,i) = normal[1];
         normal_vector_matrix(2,i) = normal[2];
         
 
         //const auto& pointMatrix = XYZcloud_filtered->at(i);
-        point_cloud(0,i) = XYZcloud_filtered->points[i].x;
-        point_cloud(1,i) = XYZcloud_filtered->points[i].y;
-        point_cloud(2,i) = XYZcloud_filtered->points[i].z;
+        point_cloud(0,i) = XYZcloudPtr->points[i].x;
+        point_cloud(1,i) = XYZcloudPtr->points[i].y;
+        point_cloud(2,i) = XYZcloudPtr->points[i].z;
       }
 
       const auto& data = getBestGraspContactPair(normal_vector_matrix, point_cloud,xyz_centroid.head(3));
@@ -379,7 +346,7 @@ private:
 int main(int argc, char **argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<PointCloudProcessor>());
+  rclcpp::spin(std::make_shared<GraspPoints>());
   rclcpp::shutdown();
   return 0;
 }

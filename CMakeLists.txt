@@ -20,6 +20,7 @@ find_package(visualization_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(gazebo_msgs REQUIRED)
+find_package(VTK REQUIRED)
 
 add_executable(ptcl_subscriber src/seg.cpp)
 ament_target_dependencies(ptcl_subscriber pcl_conversions rclcpp sensor_msgs visualization_msgs)
@@ -29,6 +30,9 @@ ament_target_dependencies(normal_pub pcl_conversions rclcpp sensor_msgs visualiz
 
 add_executable(stitch src/stitch.cpp)
 ament_target_dependencies(stitch pcl_conversions rclcpp sensor_msgs tf2 tf2_ros gazebo_msgs)
+
+add_executable(gp_points src/gp_points.cpp)
+ament_target_dependencies(gp_points pcl_conversions rclcpp sensor_msgs visualization_msgs)
 
 
 if( PCL_FOUND )
@@ -49,6 +53,7 @@ if( PCL_FOUND )
   target_link_libraries(ptcl_subscriber ${PCL_LIBRARIES} )
   target_link_libraries(normal_pub ${PCL_LIBRARIES} )
   target_link_libraries(stitch ${PCL_LIBRARIES} )
+  target_link_libraries(gp_points ${PCL_LIBRARIES} )
 
 endif()
 
@@ -60,6 +65,7 @@ install(TARGETS
   ptcl_subscriber
   normal_pub
   stitch
+  gp_points
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
