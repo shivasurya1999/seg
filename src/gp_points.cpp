@@ -21,7 +21,6 @@
 #include <pcl/features/normal_3d.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/visualization/cloud_viewer.h>
-//#include <visualization_msgs/Marker.h>
 #include <pcl/common/projection_matrix.h>
 #include <Eigen/Core>
 #include <math.h>
@@ -41,24 +40,20 @@ public:
     GraspPoints()
         : Node("gp_points")
     {
-        // subscription_1 = this->create_subscription<gazebo_msgs::msg::LinkStates>( "/demo/link_states", 
-        //                                                                 10, 
-        //                                                                 std::bind(&Stitcher::topic_callback1, 
-        //                                                                 this, std::placeholders::_1));
 
+        //subscribe to the stitched point cloud of /stitchedObject topic for further processing to get grasp points 
         subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>( "/stitchedObject", 
                                                                        10, 
                                                                        std::bind(&GraspPoints::topic_callback, 
                                                                        this, std::placeholders::_1));
 
+        //stitched point cloud is published to stitched_cloud_sor topic after statistical outlier removal 
         stitched_pub_sor = this->create_publisher<sensor_msgs::msg::PointCloud2>("stitched_cloud_sor", 10);
+        //grasp points for the stitched point cloud are published to stitched_grasp_points topic for visualization in Rviz 
         stitched_gp_point_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("stitched_grasp_points", 10);
+        //centroid of stitched point cloud is published to StitchedCentroidPoint topic
         stitched_centroid_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("StitchedCentroidPoint", 10);
 
-
-        // tf2 related
-        // tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-        // tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     }
 
 private:
@@ -67,20 +62,6 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr stitched_pub_sor;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr stitched_gp_point_pub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr stitched_centroid_pub_;
-
-    // std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
-    // std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
-    // std::optional<Eigen::Matrix4d> reference_transform;
-    // std::optional<Eigen::Matrix4d> old_transform_camera;
-
-    // std::string toFrameRel;
-    // std::string fromFrameRel;
-    // create an optional variable to store the latest pose
-    // create optional variable to store initial pose
-    // create a callback which updates the latest pose
-    // in your get_transform you can use the lates pose 
-    // on first reception of this callback update your initial pose and latest pose
-    // from second callback just update latest pose
 
    bool isCollinear(const Eigen::Vector3f& vec1, const Eigen::Vector3f& vec2, double eps = 0.1) const
   {
@@ -108,7 +89,7 @@ private:
     }
   };
 
- /* Function to calculate the best grasp contact pairs in the segmented point cloud */
+ /* Function to calculate the best grasp contact points in the stitched point cloud */
  std::vector<std::pair<Eigen::Vector3f, Eigen::Vector3f>> 
     getBestGraspContactPair(const Eigen::Matrix3Xf& normals, 
                             const Eigen::Matrix3Xf& contact_points, 
@@ -172,7 +153,7 @@ private:
           // 1st contact point normal
           const auto& C2N = normals(all, j);
 
-          // vector between cRCLCPP_INFO_STREAM(this->get_logger(), xyz_centroid(0)<<xyz_centroid(1)<<xyz_centroid(2));ontact points
+          // vector between contact points
           auto C1C2 = (C1-C2).normalized();
 
           // calculate angles between contact points and corresponding normals
@@ -186,14 +167,10 @@ private:
             {
               // Check if the corresponding grasp angle is better
               // than previous candidate grasp angles
-              //  if (grasp_angle >= best_grasp_angle) //correction: can we use |grasp_angle - M_PI|<best_angle_clearance instead of the current statement for getting 180deg instead of 190deg
               if(std::abs(grasp_angle - M_PI)<best_angle_clearance) //If the grasp_angle is the closest to 180 degrees angle, then we add it to our grasp_point_cloud
               { 
-                // std::cout<<"c1 "<<C1(0)<<","<<C1(1)<<","<<C1(2)<<std::endl;
-                // std::cout<<"c2 "<<C2(0)<<","<<C2(1)<<","<<C2(2)<<std::endl;
                 double dist1 = sqrt((centroid(0) - C1(0))*(centroid(0) - C1(0))  +  (centroid(1) - C1(1))*(centroid(1) - C1(1))  +  (centroid(2) - C1(2))*(centroid(2) - C1(2)));
                 double dist2 = sqrt((centroid(0) - C2(0))*(centroid(0) - C2(0))  +  (centroid(1) - C2(1))*(centroid(1) - C2(1))  +  (centroid(2) - C2(2))*(centroid(2) - C2(2)));
-                //std::cout<<"dist_centr "<<dist1+dist2<<std::endl;
                 if(dist1+dist2<min_dist_centr){ //distance to the centroid is minimized to select the best grasp points 
                   min_dist_centr = dist1+dist2;
                   grasp_point_cloud->push_back(pcl::PointXYZRGB(C1(0),C1(1),C1(2)));
@@ -216,7 +193,7 @@ private:
      std::cout<<"min_dist_centr "<<min_dist_centr<<std::endl;
     std::cout<<"best grasp angle in radians: "<<best_grasp_angle<<std::endl;
     std::cout<<"k= "<<grasp_point_cloud->points.size ()<<std::endl;
-    //last two points of the grasp_point_cloud are the best grasp points as per the above code so taking them and pushing them into best_grasp_points for visualization 
+    //Penultimate pair of points of the grasp_point_cloud are the best grasp points as per the above code so taking them and pushing them into best_grasp_points for visualization 
     best_grasp_points->push_back((*grasp_point_cloud)[k-4]);
     best_grasp_points->push_back((*grasp_point_cloud)[k-3]);
 
@@ -246,17 +223,16 @@ private:
       pcl::PCLPointCloud2::Ptr cloudPtr(new pcl::PCLPointCloud2); // container for pcl::PCLPointCloud
       pcl_conversions::toPCL(*msg, *cloudPtr); // convert to PCLPointCloud2 data type
 
-      // 1. Downsample 
+      // 1. Downsampling 
       pcl::VoxelGrid<pcl::PCLPointCloud2> sor;
       sor.setInputCloud (cloudPtr);
       sor.setLeafSize (0.008f, 0.008f, 0.008f);
       sor.filter (*cloudPtr);
 
-      // Convert pcl::PCLPointCloud2 to PointXYZ data type
       pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
       pcl::fromPCLPointCloud2(*cloudPtr,*cloud_filtered);
 
-      //Removing outliers using a StatisticalOutlierRemoval filter
+      //2. Removing outliers using a StatisticalOutlierRemoval filter
       pcl::PointCloud<pcl::PointXYZ>::Ptr XYZcloudPtr (new pcl::PointCloud<pcl::PointXYZ>);
       pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor_1;
       sor_1.setInputCloud (cloud_filtered);
@@ -270,7 +246,7 @@ private:
       pcl_conversions::fromPCL(*cloud_stitched, *stitched_output); 
       stitched_pub_sor->publish(*stitched_output);  
 
-      // 7. NORMAL ESTIMATION
+      // 3. NORMAL ESTIMATION
       // Create the normal estimation class, and pass the input dataset to it
       pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
       ne.setInputCloud (XYZcloudPtr);
@@ -288,17 +264,16 @@ private:
       ne.setRadiusSearch (0.03);
       ne.useSensorOriginAsViewPoint();
 
-      // 7.1 Compute the features
+      // 4 Compute the features
       ne.compute (*cloud_normals);
       RCLCPP_INFO_STREAM(this->get_logger(), "# of normals: " << cloud_normals->size ());
-      //RCLCPP_INFO_STREAM(this->get_logger(),cloud_normals->at(0).getNormalVector4fMap().head(3));
 
-      // 8. CENTROID
-      // 16-bytes aligned placeholder for the XYZ centroid of a surface patch
+      // 5. CENTROID
+      // 16-bytes aligned placeholder for the XYZ centroid 
       Eigen::Vector4f xyz_centroid;
       
       
-      // 9. Estimate the XYZ centroid
+      // 6. Estimate the XYZ centroid
       pcl::compute3DCentroid (*XYZcloudPtr, xyz_centroid);
       auto centroid_point = new sensor_msgs::msg::PointCloud2;                   
       pcl::PCLPointCloud2::Ptr centroid_cloud_point(new pcl::PCLPointCloud2);  
@@ -311,19 +286,16 @@ private:
       pcl_conversions::fromPCL(*centroid_cloud_point, *centroid_point);  
       stitched_centroid_pub_->publish(*centroid_point);
       RCLCPP_INFO_STREAM(this->get_logger(), "centroid: "<<xyz_centroid(0)<<","<<xyz_centroid(1)<<","<<xyz_centroid(2));
-                                      // publish TABLE plane to /tablePoints
 
       pcl::PointXYZ centroidXYZ(xyz_centroid[0], xyz_centroid[1], xyz_centroid[2]);
 
-      // 10. FLIPPING NORMALS ACCORIDNG TO CENTROID
+      // 7. FLIPPING NORMALS ACCORIDNG TO CENTROID
       Eigen::Matrix3Xf normal_vector_matrix(3,cloud_normals->size());
       Eigen::Matrix3Xf point_cloud(3,cloud_normals->size());
       for(size_t i = 0; i < cloud_normals->size(); i++) 
       {
         Eigen::Vector3f normal = cloud_normals->at(i).getNormalVector4fMap().head(3);
         Eigen::Vector3f normal_dup = cloud_normals->at(i).getNormalVector4fMap().head(3);
-
-        //pcl::flipNormalTowardsViewpoint(centroidXYZ, 0, 0, 0, normal);
         
         pcl::flipNormalTowardsViewpoint(XYZcloudPtr->at(i), xyz_centroid[0], xyz_centroid[1], xyz_centroid[2], normal);
         normal_vector_matrix(0,i) = normal[0];
@@ -337,7 +309,7 @@ private:
         point_cloud(2,i) = XYZcloudPtr->points[i].z;
       }
 
-      const auto& data = getBestGraspContactPair(normal_vector_matrix, point_cloud,xyz_centroid.head(3));
+      const auto& data = getBestGraspContactPair(normal_vector_matrix, point_cloud,xyz_centroid.head(3)); //FDunction is called to get the best grasp contact points
       RCLCPP_INFO_STREAM(this->get_logger(), "Size of data: " << data.size());
       
     };

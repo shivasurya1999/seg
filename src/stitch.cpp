@@ -21,32 +21,35 @@
 #include "gazebo_msgs/msg/link_states.hpp"
 
 
-class Stitcher : public rclcpp::Node
+class Stitcher : public rclcpp::Node //Create a node for stitching 
 {
 
 public:
     Stitcher()
         : Node("stitcher")
-        , toFrameRel("camera_link")
-        , fromFrameRel("camera_link_optical")
+        , toFrameRel("camera_link") //We need tf with respect to camera link 
+        , fromFrameRel("camera_link_optical") //We need tf of camera_link_optical 
     {
+        //Subscribe to /demo/link/states for getting the transformation of camera with respect to the world from gazebo 
         subscription_1 = this->create_subscription<gazebo_msgs::msg::LinkStates>( "/demo/link_states", 
                                                                         10, 
                                                                         std::bind(&Stitcher::topic_callback1, 
                                                                         this, std::placeholders::_1));
 
+        //Subscribe to /objectPoints for getting Point Cloud data 
         subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>( "/objectPoints", 
                                                                        10, 
                                                                        std::bind(&Stitcher::topic_callback, 
                                                                        this, std::placeholders::_1));
 
+        //Publish the stitched point cloud to /stitchedObject topic for visualization in Rviz2
         stitched_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/stitchedObject", 10);
 
 
 
-        // tf2 related
+        
         tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_); // Creating tf2 listener
     }
 
 private:
@@ -55,23 +58,17 @@ private:
     rclcpp::Subscription<gazebo_msgs::msg::LinkStates>::SharedPtr subscription_1;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr stitched_pub_;
-    pcl::PointCloud<pcl::PointXYZ>::Ptr old_stitched_point_cloud;
-    //pcl::PointCloud<pcl::PointXYZ> old_stitched_point_cloud;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr old_stitched_point_cloud; //create a pointer to the current stitched point cloud 
 
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
-    std::optional<Eigen::Matrix4d> reference_transform;
-    std::optional<Eigen::Matrix4d> old_transform_camera;
+    std::optional<Eigen::Matrix4d> reference_transform; //Initial transform of camera to the world when the camera is launched in gazebo 
+    std::optional<Eigen::Matrix4d> old_transform_camera; //old camera transformation to the world frame 
 
     std::string toFrameRel;
     std::string fromFrameRel;
-    // create an optional variable to store the latest pose
-    // create optional variable to store initial pose
-    // create a callback which updates the latest pose
-    // in your get_transform you can use the lates pose 
-    // on first reception of this callback update your initial pose and latest pose
-    // from second callback just update latest pose
 
+    // Helper function to convert sensor_msg::PointCloud2 to PointXYZ data type
     pcl::PointCloud<pcl::PointXYZ>::Ptr 
         sensorMsgToXYZCloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg) const
     {
@@ -86,6 +83,7 @@ private:
         return XYZcloudPtr;
     }
 
+    // Helper function to convert PointXYZ data type to sensor_msgs::msg::PointCloud2
     std::shared_ptr<sensor_msgs::msg::PointCloud2>
         XYZCloudToSensorMsg(const pcl::PointCloud<pcl::PointXYZ>& cloud) const
     {
@@ -103,23 +101,19 @@ private:
         return cloud_msg;
     }
 
+    //Get transform of camera from a /demo/link_states message 
     std::optional<Eigen::Matrix4d> get_transform_camera(geometry_msgs::msg::TransformStamped message1) const
     {
-
-        // Look up for the transformation between target_frame and turtle2 frames
-        // and send velocity commands for turtle2 to reach target_frame
-
         auto eigen_transform = tf2::transformToEigen(message1);
         Eigen::Matrix4d data = eigen_transform.matrix();
-        return {data};
+        return {data}; //matrix data is extracted from the message and returned as std::optional<Eigen::Matrix4d>
     }
 
     std::optional<Eigen::Matrix4d> get_transform() const
     {
         geometry_msgs::msg::TransformStamped t;
 
-        // Look up for the transformation between target_frame and turtle2 frames
-        // and send velocity commands for turtle2 to reach target_frame
+        // Look up for the transformation between camera_link_optical frame and camera_link frame
         try 
         {
             t = tf_buffer_->lookupTransform(toFrameRel, fromFrameRel, tf2::TimePointZero);
@@ -133,21 +127,11 @@ private:
 
         auto eigen_transform = tf2::transformToEigen(t);
         Eigen::Matrix4d data = eigen_transform.matrix();
-        return {data};
+        return {data}; //return the transform as a matrix as std::optional<Eigen::Matrix4d>
     }
-
-    std::optional<Eigen::Matrix4d> get_ref_transform_inv() const
-    {
-        Eigen::Matrix4d data;
-        Eigen::Matrix4d data_inv;
-        data = reference_transform.value();
-        data_inv = data.inverse();
-        return {data_inv};
-    }
-
 
     template<typename T>
-    bool is_tolerant(const T& val, double threshold, double eps = 0.1) const
+    bool is_tolerant(const T& val, double threshold, double eps = 0.1) const //checks whether the given value is in a certain range within the threshold input value 
     {
         if (threshold - eps <= val && val <= threshold + eps)
         {
@@ -157,14 +141,14 @@ private:
         return false;
     }
 
-    struct TStruct
+    struct TStruct //struct for axis angle representation 
     {
         Eigen::Vector3d trans;
         Eigen::Vector3d axis;
         double angle;
     };
 
-    TStruct convertTtoAA(const Eigen::Matrix4d& T) const
+    TStruct convertTtoAA(const Eigen::Matrix4d& T) const //Converts a transformation matrix to axis angle representation and returns the translation vector,rotation matrix and axis angle
     {
 
         Eigen::Matrix3d rot = T(Eigen::seqN(0,3),Eigen::seqN(0,3));
@@ -179,20 +163,18 @@ private:
     }
 
     bool is_transformation_changed( const Eigen::Matrix4d& newT, 
-                                    double eps = 0.2) const
+                                    double eps = 0.2) const     //Checks if transformation of camera is changed when the user moves it manually in gazebo. Returns true if changed
     {
 
-        if (!reference_transform)
+        if (!reference_transform) //if reference transform is not yet initialized, it returns false 
         {
             return false;
         }
 
-        auto [newTrans, newAxis, newAngle] = convertTtoAA(newT);
-        auto [oldTrans, oldAxis, oldAngle] = convertTtoAA(*old_transform_camera);
+        auto [newTrans, newAxis, newAngle] = convertTtoAA(newT); //converting new transform to axis angle 
+        auto [oldTrans, oldAxis, oldAngle] = convertTtoAA(*old_transform_camera); //converting old transform to axis angle 
 
-        //if(newT==*old_transform_camera) return false;
-
-        // axis-angle representation of rotation matrix
+        // checking how much the new transform deviates from the old transform 
         auto axis_range = newAxis.dot(oldAxis);
         auto transDist = (newTrans - oldTrans).squaredNorm();
         if (is_tolerant(axis_range, 0, eps)
@@ -205,13 +187,14 @@ private:
         return true;
     }
 
-    void topic_callback1(const gazebo_msgs::msg::LinkStates msg1)
+    void topic_callback1(const gazebo_msgs::msg::LinkStates msg1) //Get the message of /demo/link_states 
     {
-        sleep(10);
+        sleep(10); //delay of 10 seconds between processing messages for better point cloud stitching. We need to give more time for letting the camera move to a location before taking transform
         const std::vector<std::string> &names = msg1.name;
-        std::string i = names[2];
-        std::cout<<"i:"<<i<<std::endl;
-        const geometry_msgs::msg::Pose camera_pose = msg1.pose[2];
+        std::string i = names[2]; //as there are different objects like camera, object, table in gazebo we need to choode camera_link as our desired transformation 
+        std::cout<<"i:"<<i<<std::endl; //print to terminal to verify 
+        const geometry_msgs::msg::Pose camera_pose = msg1.pose[2]; //msg1.pose[3] needs to be used fof coke can and msg1.pose[2] for other objects 
+        //input camera pose information into a new message 
         message1.transform.translation.x = camera_pose.position.x;
         message1.transform.translation.y = camera_pose.position.y;
         message1.transform.translation.z = camera_pose.position.z;
@@ -224,8 +207,7 @@ private:
 
     void topic_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
     {
-        //get initial tf b/w camera and world in gazebo 
-        //sleep(5);
+        //print tf b/w camera and world in gazebo to the terminal for verification 
         std::cout<<"message1.transform.translation.x:"<<message1.transform.translation.x<<std::endl;
         std::cout<<"message1.transform.translation.y:"<<message1.transform.translation.y<<std::endl;
         std::cout<<"message1.transform.translation.z:"<<message1.transform.translation.z<<std::endl;
@@ -234,14 +216,15 @@ private:
         std::cout<<"message1.transform.rotation.z:"<<message1.transform.rotation.z<<std::endl;
         std::cout<<"message1.transform.rotation.w:"<<message1.transform.rotation.w<<std::endl;
         
-        // 1. get transformation - rotation and translation
+        // 1. get transformation of camera from message 1 of topic_callback1
         auto latest_transform_camera = get_transform_camera(message1);
-        auto latest_transform_optional = get_transform();
+        auto latest_transform_optional = get_transform(); //Get tf between camera_link_optical and camera_link because point cloud is initially in camera_link_optical frame as per camera.urdf file
         
         if (!latest_transform_optional)
         {
             return;
         }
+        //using new variables to store latest_transform_optional and latest_transform_camera
         auto latest_transform = *latest_transform_optional;
         auto camera_transform = *latest_transform_camera;
         RCLCPP_INFO_STREAM(get_logger(), "got transform: " << latest_transform);
@@ -250,8 +233,9 @@ private:
         if (!reference_transform)
         {
             RCLCPP_INFO_STREAM(get_logger(), "transform was not initialized");
-            reference_transform = latest_transform;
-            old_transform_camera = latest_transform_camera;
+            reference_transform = latest_transform; //reference_transform is the latest transform 
+            old_transform_camera = latest_transform_camera; //latest camera transform is sent to old_transform_camera
+            //The current point cloud (initial cloud) is sent to old_stitched_point cloud as the initial stitched point_cloud
             pcl::PointCloud<pcl::PointXYZ> pre_old_st_cloud;
             pcl::PointCloud<pcl::PointXYZ> old_cloud;
             pcl::PointCloud<pcl::PointXYZ>::Ptr cloudPTR(new pcl::PointCloud<pcl::PointXYZ>);
@@ -259,45 +243,32 @@ private:
             pcl::transformPointCloud(*first_cloud,pre_old_st_cloud, latest_transform);
             pcl::transformPointCloud(pre_old_st_cloud,old_cloud, camera_transform);
             *cloudPTR = old_cloud;
-            //pcl::transformPointCloud(pre_old_st_cloud,old_stitched_point_cloud, camera_transform);
             old_stitched_point_cloud = cloudPTR;
             auto first_out_msg = XYZCloudToSensorMsg(*old_stitched_point_cloud);
-            stitched_pub_->publish(*first_out_msg);
+            stitched_pub_->publish(*first_out_msg); //stitched (initial) point cloud is published to /stitchedObject topic for visualization in Rviz
             return;
         }
-        //auto ref_transform_pinverse = reference_transform.completeOrthogonalDecomposition().pseudoInverse();
-        // else{
-        //     RCLCPP_INFO_STREAM(get_logger(), "transform is initialized");
-        // }
-        
-        // // auto ref_transform_inverse_optional = get_ref_transform_inv();
-        // // auto ref_transform_inverse = *ref_transform_inverse_optional;
         
         // 3. check if transform has changed
         if (!is_transformation_changed(camera_transform))
         {
-            RCLCPP_INFO_STREAM(get_logger(), "transform unchanged, jovial mode");
-            stitched_pub_->publish(*msg);
-            //old_stitched_point_cloud = *sensorMsgToXYZCloud(msg);
+            RCLCPP_INFO_STREAM(get_logger(), "transform unchanged, jovial mode"); //statement printed to terminal indicating that camera transform is not changed in gazebo 
+            stitched_pub_->publish(*msg); //keep publishing the current input point cloud as stitched point cloud until transform is changed 
             return;
         }
-        RCLCPP_INFO_STREAM(get_logger(), "transform has changed, SERIOUS MODE -_-");
+        RCLCPP_INFO_STREAM(get_logger(), "transform has changed, SERIOUS MODE -_-"); //statement printed to terminal indicating that camera transform is changed in gazebo 
 
-        // 4. transform the callback point cloud using the above
+        // 4. change the callback point cloud for point cloud processing 
         auto input_cloud = sensorMsgToXYZCloud(msg);
         
         pcl::PointCloud<pcl::PointXYZ> pre_transformed_cloud;
         pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_cloud;
-        // pcl::PointCloud<pcl::PointXYZ> transformed_cloud;
         pcl::PointCloud<pcl::PointXYZ> t_cloud;
         pcl::PointCloud<pcl::PointXYZ>::Ptr tcloudPTR(new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::transformPointCloud(*input_cloud,pre_transformed_cloud, latest_transform);
-        pcl::transformPointCloud(pre_transformed_cloud,t_cloud, camera_transform);
+        pcl::transformPointCloud(*input_cloud,pre_transformed_cloud, latest_transform); //change input cloud from camera_link_optical to camera_link frame 
+        pcl::transformPointCloud(pre_transformed_cloud,t_cloud, camera_transform); //change the cloud in camera_link_frame to world_frame 
         *tcloudPTR = t_cloud;
-        transformed_cloud = tcloudPTR;
-        ////pre_transformed_cloud = *input_cloud;
-    
-        // RCLCPP_INFO_STREAM(get_logger(), "transformed point cloud");
+        transformed_cloud = tcloudPTR; //final input cloud in world frame 
 
         // 5. align the transformed cloud with the old stitched point cloud using ICP 
         int iterations = 60;
@@ -308,25 +279,16 @@ private:
         icp.align (*transformed_cloud);
 
         // 6. Stitch the point clouds 
-        *old_stitched_point_cloud += *transformed_cloud;
+        *old_stitched_point_cloud += *transformed_cloud; //add the aligned point cloud to the old_stitched_cloud which stitches both the point cloud together 
         RCLCPP_INFO_STREAM(get_logger(), "stitched cloud, it's gonna rain");
 
-        // 7. publish
+        // 7. publish the stitched point cloud to /stitchedObject topic for visualization in Rviz
         auto out_msg = XYZCloudToSensorMsg(*old_stitched_point_cloud);
         stitched_pub_->publish(*out_msg);
         old_transform_camera = latest_transform_camera;
         return;
 
     }
-
-    // 1. restart the world
-    // 2. segment 
-    // 3. check the object is segmented in rviz
-    // 4. run the stitcher
-    // 5. should publish the cloud as it is
-    // 6. get contact pairs
-    // 7. change the position using the python client
-    // 8. 
 
 };
 

@@ -20,7 +20,6 @@
 #include <pcl/features/normal_3d.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/visualization/cloud_viewer.h>
-//#include <visualization_msgs/Marker.h>
 #include <pcl/common/projection_matrix.h>
 #include <Eigen/Core>
 #include <math.h>
@@ -161,14 +160,10 @@ private:
             {
               // Check if the corresponding grasp angle is better
               // than previous candidate grasp angles
-              //  if (grasp_angle >= best_grasp_angle) //correction: can we use |grasp_angle - M_PI|<best_angle_clearance instead of the current statement for getting 180deg instead of 190deg
               if(std::abs(grasp_angle - M_PI)<best_angle_clearance) //If the grasp_angle is the closest to 180 degrees angle, then we add it to our grasp_point_cloud
               { 
-                // std::cout<<"c1 "<<C1(0)<<","<<C1(1)<<","<<C1(2)<<std::endl;
-                // std::cout<<"c2 "<<C2(0)<<","<<C2(1)<<","<<C2(2)<<std::endl;
                 double dist1 = sqrt((centroid(0) - C1(0))*(centroid(0) - C1(0))  +  (centroid(1) - C1(1))*(centroid(1) - C1(1))  +  (centroid(2) - C1(2))*(centroid(2) - C1(2)));
                 double dist2 = sqrt((centroid(0) - C2(0))*(centroid(0) - C2(0))  +  (centroid(1) - C2(1))*(centroid(1) - C2(1))  +  (centroid(2) - C2(2))*(centroid(2) - C2(2)));
-                //std::cout<<"dist_centr "<<dist1+dist2<<std::endl;
                 if(dist1+dist2<min_dist_centr){ //distance to the centroid is minimized to select the best grasp points 
                   min_dist_centr = dist1+dist2;
                   grasp_point_cloud->push_back(pcl::PointXYZRGB(C1(0),C1(1),C1(2)));
@@ -190,8 +185,7 @@ private:
     }
      std::cout<<"min_dist_centr "<<min_dist_centr<<std::endl;
     std::cout<<"best grasp angle in radians: "<<best_grasp_angle<<std::endl;
-    // std::cout<<"k= "<<grasp_point_cloud->points.size ()<<std::endl;
-    //last two points of the grasp_point_cloud are the best grasp points as per the above code so taking them and pushing them into best_grasp_points for visualization 
+    //Penultimate pair of points of the grasp_point_cloud are the best grasp points as per the above code so taking them and pushing them into best_grasp_points for visualization 
     best_grasp_points->push_back((*grasp_point_cloud)[k-4]);
     best_grasp_points->push_back((*grasp_point_cloud)[k-3]);
 
@@ -327,7 +321,6 @@ private:
       pcl_conversions::fromPCL(*centroid_cloud_point, *centroid_point);        
       centroid_pub_->publish(*centroid_point);
       RCLCPP_INFO_STREAM(this->get_logger(), "centroid: "<<xyz_centroid(0)<<","<<xyz_centroid(1)<<","<<xyz_centroid(2));
-    
 
 
        // Table
@@ -356,15 +349,12 @@ private:
         Eigen::Vector3f normal = cloud_normals->at(i).getNormalVector4fMap().head(3);
         Eigen::Vector3f normal_dup = cloud_normals->at(i).getNormalVector4fMap().head(3);
 
-        //pcl::flipNormalTowardsViewpoint(centroidXYZ, 0, 0, 0, normal);
         
         pcl::flipNormalTowardsViewpoint(XYZcloud_filtered->at(i), xyz_centroid[0], xyz_centroid[1], xyz_centroid[2], normal);
         normal_vector_matrix(0,i) = normal[0];
         normal_vector_matrix(1,i) = normal[1];
         normal_vector_matrix(2,i) = normal[2];
-        
 
-        //const auto& pointMatrix = XYZcloud_filtered->at(i);
         point_cloud(0,i) = XYZcloud_filtered->points[i].x;
         point_cloud(1,i) = XYZcloud_filtered->points[i].y;
         point_cloud(2,i) = XYZcloud_filtered->points[i].z;
