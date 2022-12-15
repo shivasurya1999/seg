@@ -191,9 +191,9 @@ private:
     {
         sleep(10); //delay of 10 seconds between processing messages for better point cloud stitching. We need to give more time for letting the camera move to a location before taking transform
         const std::vector<std::string> &names = msg1.name;
-        std::string i = names[2]; //as there are different objects like camera, object, table in gazebo we need to choode camera_link as our desired transformation 
+        std::string i = names[3]; //as there are different objects like camera, object, table in gazebo we need to choode camera_link as our desired transformation 
         std::cout<<"i:"<<i<<std::endl; //print to terminal to verify 
-        const geometry_msgs::msg::Pose camera_pose = msg1.pose[2]; //msg1.pose[3] needs to be used fof coke can and msg1.pose[2] for other objects 
+        const geometry_msgs::msg::Pose camera_pose = msg1.pose[3]; //msg1.pose[3] needs to be used fof coke can and msg1.pose[2] for other objects 
         //input camera pose information into a new message 
         message1.transform.translation.x = camera_pose.position.x;
         message1.transform.translation.y = camera_pose.position.y;
